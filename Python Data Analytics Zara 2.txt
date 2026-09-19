@@ -1,0 +1,84 @@
+import pandas as pd
+import numpy as np
+from mlxtend.frequent_patterns import apriori, association_rules
+from google.colab import files
+import warnings
+
+warnings.filterwarnings('ignore')
+
+# 1. Subir archivo
+print("📥 Sube tu archivo (zara.xlsx o zara.csv):")
+uploaded = files.upload()
+file_name = list(uploaded.keys())[0]
+
+# Leer archivo
+if file_name.endswith('.csv'):
+    try:
+        df = pd.read_csv(file_name, sep=';', on_bad_lines='skip')
+        if len(df.columns) <= 1: df = pd.read_csv(file_name, sep=',', on_bad_lines='skip')
+    except:
+        df = pd.read_csv(file_name, sep=',', on_bad_lines='skip')
+else:
+    df = pd.read_excel(file_name)
+
+# 2. Limpieza básica
+col_map = {str(c).strip().lower(): c for c in df.columns}
+price_col = col_map.get('price', col_map.get('precio'))
+sales_col = col_map.get('sales volume', col_map.get('ventas'))
+promo_col = col_map.get('promotion', 'Promotion')
+season_col = col_map.get('seasonal', 'Seasonal')
+sec_col = col_map.get('section', 'section')
+
+import re
+def clean_currency(x):
+    if pd.isna(x): return np.nan
+    x_str = str(x).strip().replace('$', '').replace('€', '').replace(' ', '')
+    if ',' in x_str and '.' in x_str:
+        x_str = x_str.replace('.', '').replace(',', '.') if x_str.rfind(',') > x_str.rfind('.') else x_str.replace(',', '')
+    elif ',' in x_str:
+        x_str = x_str.replace(',', '.')
+    match = re.search(r'\d+\.?\d*', x_str)
+    return float(match.group()) if match else np.nan
+
+df[price_col] = df[price_col].apply(clean_currency)
+df[sales_col] = df[sales_col].apply(clean_currency)
+df = df.dropna(subset=[price_col, sales_col]).copy()
+
+# 3. Discretización (Convertir números a categorías para las Reglas)
+med_price = df[price_col].median()
+med_sales = df[sales_col].median()
+
+df['Nivel_Precio'] = np.where(df[price_col] > med_price, 'Precio: ALTO', 'Precio: BAJO')
+df['Nivel_Ventas'] = np.where(df[sales_col] > med_sales, 'Ventas: ALTAS', 'Ventas: BAJAS')
+
+# 4. Preparar la "Cesta" de Asociación
+cesta = df[['Nivel_Precio', 'Nivel_Ventas', season_col, promo_col, sec_col]].astype(str)
+
+# Convertir a variables Dummies (0 y 1) como lo exige el algoritmo Apriori
+cesta_encoded = pd.get_dummies(cesta)
+
+# 5. Aplicar Algoritmo Apriori
+# min_support = 0.05 significa que el patrón debe aparecer en al menos el 5% del catálogo
+patrones_frecuentes = apriori(cesta_encoded, min_support=0.05, use_colnames=True)
+
+# Generar las reglas de asociación
+reglas = association_rules(patrones_frecuentes, metric="confidence", min_threshold=0.6)
+
+# Ordenar por "Lift" (Fuerza de la regla) y Confianza
+reglas = reglas.sort_values(by=['lift', 'confidence'], ascending=[False, False])
+
+print("\n" + "="*70)
+print("🧠 TOP 5 REGLAS DE ASOCIACIÓN MÁS FUERTES DESCUBIERTAS")
+print("="*70)
+
+for index, row in reglas.head(5).iterrows():
+    antecedentes = ", ".join(list(row['antecedents']))
+    consecuentes = ", ".join(list(row['consequents']))
+
+    # Limpiar textos visuales
+    antecedentes = antecedentes.replace(f'{season_col}_', 'Temporada: ').replace(f'{promo_col}_', 'Promo: ').replace(f'{sec_col}_', 'Sección: ')
+    consecuentes = consecuentes.replace(f'{season_col}_', 'Temporada: ').replace(f'{promo_col}_', 'Promo: ').replace(f'{sec_col}_', 'Sección: ')
+
+    print(f"\n🔹 SI UN PRODUCTO ES: [{antecedentes}]")
+    print(f"   👉 ENTONCES TAMBIÉN ES: [{consecuentes}]")
+    print(f"   (Confianza: {row['confidence']*100:.1f}% | Fuerza/Lift: {row['lift']:.2f})")

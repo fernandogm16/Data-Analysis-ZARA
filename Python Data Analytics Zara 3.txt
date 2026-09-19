@@ -1,0 +1,104 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from google.colab import files
+import warnings
+import re
+
+warnings.filterwarnings('ignore')
+
+# 1. SUBIR Y LEER EL ARCHIVO
+print("📥 Por favor, sube tu archivo (zara.xlsx o zara.csv):")
+uploaded = files.upload()
+file_name = list(uploaded.keys())[0]
+
+if file_name.endswith('.csv'):
+    try:
+        df = pd.read_csv(file_name, sep=';', on_bad_lines='skip')
+        if len(df.columns) <= 1: df = pd.read_csv(file_name, sep=',', on_bad_lines='skip')
+    except:
+        df = pd.read_csv(file_name, sep=',', on_bad_lines='skip')
+else:
+    df = pd.read_excel(file_name)
+
+# 2. LIMPIEZA DE DATOS Y COLUMNAS
+col_map = {str(c).strip().lower(): c for c in df.columns}
+price_col = col_map.get('price', col_map.get('precio'))
+sales_col = col_map.get('sales volume', col_map.get('ventas'))
+promo_col = col_map.get('promotion', 'Promotion')
+season_col = col_map.get('seasonal', 'Seasonal')
+sec_col = col_map.get('section', 'section')
+
+def clean_currency(x):
+    if pd.isna(x): return np.nan
+    x_str = str(x).strip().replace('$', '').replace('€', '').replace(' ', '')
+    if ',' in x_str and '.' in x_str:
+        x_str = x_str.replace('.', '').replace(',', '.') if x_str.rfind(',') > x_str.rfind('.') else x_str.replace(',', '')
+    elif ',' in x_str:
+        x_str = x_str.replace(',', '.')
+    match = re.search(r'\d+\.?\d*', x_str)
+    return float(match.group()) if match else np.nan
+
+df[price_col] = df[price_col].apply(clean_currency)
+df[sales_col] = df[sales_col].apply(clean_currency)
+df = df.dropna(subset=[price_col, sales_col]).copy()
+
+# Crear categorías Alto/Bajo basándonos en la mediana para el Mapa de Calor
+med_price = df[price_col].median()
+df['Nivel_Precio'] = np.where(df[price_col] > med_price, 'Precio ALTO', 'Precio BAJO')
+
+print("\n📊 RENDERIZANDO VISUALIZACIONES DE COMPORTAMIENTO...\n")
+sns.set_theme(style="whitegrid", palette="muted")
+
+# =========================================================
+# GRÁFICA 1: IMPACTO DE PROMOCIONES (HOMBRES VS MUJERES)
+# =========================================================
+plt.figure(figsize=(10, 6))
+# Usamos errorbar=None para mostrar barras limpias
+sns.barplot(data=df, x=sec_col, y=sales_col, hue=promo_col, errorbar=None, edgecolor='black', palette='Set2')
+plt.title('1. Impacto de Promociones en Ventas (Por Sección)', fontsize=15, fontweight='bold', pad=15)
+plt.xlabel('Sección (Hombre, Mujer, etc.)', fontsize=12)
+plt.ylabel('Promedio de Ventas (Unidades)', fontsize=12)
+plt.legend(title='¿En Promoción?', loc='upper right')
+plt.tight_layout()
+plt.show()
+
+# =========================================================
+# GRÁFICA 2: EL MITO DE LA ROPA DE TEMPORADA
+# =========================================================
+plt.figure(figsize=(10, 6))
+sns.barplot(data=df, x=season_col, y=sales_col, hue=promo_col, palette="Set1", errorbar=None, edgecolor='black')
+plt.title('2. El Mito "Seasonal": ¿Se vende sola la ropa de Temporada?', fontsize=15, fontweight='bold', pad=15)
+plt.xlabel('¿Es ropa de Temporada (Seasonal)?', fontsize=12)
+plt.ylabel('Promedio de Ventas (Unidades)', fontsize=12)
+plt.legend(title='¿En Promoción?', loc='upper right')
+plt.tight_layout()
+plt.show()
+
+# =========================================================
+# GRÁFICA 3: MAPA DE CALOR ESTRATÉGICO (HEATMAP)
+# =========================================================
+plt.figure(figsize=(9, 5))
+# Creamos una tabla dinámica cruzando Precios, Secciones y el Promedio de Ventas
+pivot = df.pivot_table(values=sales_col, index='Nivel_Precio', columns=sec_col, aggfunc='mean')
+sns.heatmap(pivot, annot=True, fmt=".0f", cmap="YlGnBu", linewidths=.5, cbar_kws={'label': 'Ventas Promedio'})
+plt.title('3. Mapa de Calor: Zonas Calientes de Ventas (Precio vs Sección)', fontsize=15, fontweight='bold', pad=15)
+plt.xlabel('Sección', fontsize=12)
+plt.ylabel('Nivel de Precio', fontsize=12)
+plt.tight_layout()
+plt.show()
+
+# =========================================================
+# GRÁFICA 4: GRÁFICO DE VIOLÍN (DENSIDAD DE COMPRAS)
+# =========================================================
+plt.figure(figsize=(12, 7))
+sns.violinplot(data=df, x=promo_col, y=sales_col, hue=sec_col, split=False, palette="Pastel1", inner="quartile")
+plt.title('4. Densidad de Compras: ¿Dónde se aglomera el volumen?', fontsize=15, fontweight='bold', pad=15)
+plt.xlabel('¿Tiene Promoción?', fontsize=12)
+plt.ylabel('Volumen de Ventas (Unidades)', fontsize=12)
+plt.legend(title='Sección', loc='upper right')
+plt.tight_layout()
+plt.show()
+
+print("✅ ¡Visualizaciones de patrones completadas!")

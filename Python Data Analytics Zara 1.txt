@@ -1,0 +1,141 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from google.colab import files
+import warnings
+import re
+
+# Limpiar advertencias visuales
+warnings.filterwarnings('ignore')
+
+# 1. SUBIR Y LEER EL ARCHIVO
+print("📥 Por favor, sube tu archivo (zara.xlsx o zara.csv):")
+uploaded = files.upload()
+file_name = list(uploaded.keys())[0]
+
+try:
+    if file_name.endswith('.csv'):
+        try:
+            df = pd.read_csv(file_name, sep=';', on_bad_lines='skip')
+            if len(df.columns) <= 1:
+                df = pd.read_csv(file_name, sep=',', on_bad_lines='skip')
+        except:
+            df = pd.read_csv(file_name, sep=',', on_bad_lines='skip')
+    else:
+        df = pd.read_excel(file_name)
+except Exception as e:
+    print(f"❌ Error leyendo el archivo: {e}")
+    raise e
+
+# 2. DETECTAR COLUMNAS
+col_map = {str(c).strip().lower(): c for c in df.columns}
+price_col = col_map.get('price', col_map.get('precio'))
+sales_col = col_map.get('sales volume', col_map.get('ventas', col_map.get('sales_volume')))
+
+if not price_col or not sales_col:
+    print("❌ Error: Faltan las columnas de Precio o Ventas en tu archivo.")
+else:
+    # 3. LIMPIEZA DE DATOS (NUEVO ALGORITMO A PRUEBA DE ERRORES DE FORMATO)
+    def clean_currency(x):
+        if pd.isna(x):
+            return np.nan
+        x_str = str(x).strip().replace('$', '').replace('€', '').replace(' ', '')
+
+        # Manejo de formatos de miles y decimales (ej. 1.234,56 vs 1,234.56)
+        if ',' in x_str and '.' in x_str:
+            if x_str.rfind(',') > x_str.rfind('.'):
+                x_str = x_str.replace('.', '').replace(',', '.')
+            else:
+                x_str = x_str.replace(',', '')
+        elif ',' in x_str:
+            x_str = x_str.replace(',', '.')
+
+        # Extraer estrictamente el número y el punto decimal
+        match = re.search(r'\d+\.?\d*', x_str)
+        if match:
+            try:
+                return float(match.group())
+            except:
+                return np.nan
+        return np.nan
+
+    # Aplicar la limpieza indestructible
+    df[price_col] = df[price_col].apply(clean_currency)
+    df[sales_col] = df[sales_col].apply(clean_currency)
+
+    # Borrar filas que se quedaron sin precio o ventas
+    df = df.dropna(subset=[price_col, sales_col]).copy()
+
+    # Filtrar precios exactamente iguales a 0 si es que existen por error de catálogo
+    df = df[df[price_col] > 0]
+
+    # ✨ CREAR NUEVA MÉTRICA PARA EL 3D: INGRESOS
+    df['Ingresos_Brutos'] = df[price_col] * df[sales_col]
+
+    # 4. Aplicar K-Means Clustering
+    X = df[[price_col, sales_col]]
+    X_scaled = StandardScaler().fit_transform(X)
+    kmeans = KMeans(n_clusters=4, random_state=42, n_init=10)
+    df['Cluster'] = kmeans.fit_predict(X_scaled)
+    df['Nombre_Cluster'] = 'Grupo ' + df['Cluster'].astype(str)
+
+    print("\n🎨 RENDERIZANDO SET DE GRÁFICAS (2D y 3D)...\n")
+
+    # ==============================================================
+    # GRÁFICA 1: DISPERSIÓN 2D (Scatter Plot)
+    # ==============================================================
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(data=df, x=price_col, y=sales_col, hue='Nombre_Cluster', palette='Set1',
+                    size=sales_col, sizes=(40, 250), alpha=0.8, edgecolor='black')
+    plt.title('1. Dispersión 2D: Precio vs Volumen (Agrupado por IA)', fontsize=14, fontweight='bold')
+    plt.xlabel('Precio Real ($)')
+    plt.ylabel('Volumen de Ventas')
+    plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left')
+    plt.tight_layout()
+    plt.show()
+
+    # ==============================================================
+    # GRÁFICA 2: BOXPLOT 2D (Cajas y Bigotes para ver Valores Atípicos)
+    # ==============================================================
+    plt.figure(figsize=(10, 6))
+    sns.boxplot(data=df, x='Nombre_Cluster', y=price_col, palette='Set2')
+    sns.stripplot(data=df, x='Nombre_Cluster', y=price_col, color="black", alpha=0.2, jitter=True)
+    plt.title('2. Boxplot 2D: Distribución de Precios y Valores Atípicos por Grupo', fontsize=14, fontweight='bold')
+    plt.xlabel('Clasificación (Clúster)')
+    plt.ylabel('Precio Real ($)')
+    plt.tight_layout()
+    plt.show()
+
+    # ==============================================================
+    # GRÁFICA 3: HISTOGRAMA 2D CON CURVA DE DENSIDAD
+    # ==============================================================
+    plt.figure(figsize=(10, 6))
+    sns.histplot(df[price_col], bins=30, kde=True, color='purple', edgecolor='black')
+    plt.title('3. Histograma 2D: Distribución General de Precios', fontsize=14, fontweight='bold')
+    plt.xlabel('Precio Real ($)')
+    plt.ylabel('Cantidad de Productos en el Catálogo')
+    plt.tight_layout()
+    plt.show()
+
+    # ==============================================================
+    # GRÁFICA 4: PROYECCIÓN 3D INTERACTIVA
+    # ==============================================================
+    fig = plt.figure(figsize=(12, 9))
+    ax = fig.add_subplot(111, projection='3d')
+
+    sc = ax.scatter(df[price_col], df[sales_col], df['Ingresos_Brutos'],
+                    c=df['Cluster'], cmap='Set1', s=60, alpha=0.9, edgecolor='black')
+
+    ax.set_title('4. Proyección 3D: Precio vs Ventas vs Ingresos Totales', fontsize=16, fontweight='bold', pad=20)
+    ax.set_xlabel('Eje X: Precio ($)', fontweight='bold')
+    ax.set_ylabel('Eje Y: Ventas', fontweight='bold')
+    ax.set_zlabel('Eje Z: Ingresos ($)', fontweight='bold')
+
+    ax.view_init(elev=20, azim=130)
+    plt.tight_layout()
+    plt.show()
+
+    print("\n✅ ¡Gráficas renderizadas exitosamente con los precios correctos!")
